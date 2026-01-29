@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-func define() {
+func Define() {
 	type Empl struct {
 		Name   string
 		Age    int
@@ -10,5 +10,5 @@ func define() {
 	}
 
 	var job Empl = Empl{Name: "Praneeth", Age: 21, Remote: true}
-	fmt.Println("%t", job)
+	fmt.Printf("%t", job)
 }
