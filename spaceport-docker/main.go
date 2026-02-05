@@ -45,6 +45,10 @@ func main() {
 	// Bay Maps (sounds like baymax lol)
 	bayMap := make(map[string][]int)
 
+	for i := range {1,2} {
+		fmt.Println(i)
+	}
+
 	for _, ele := range cargoIds {
 		if isExpressCargo(ele) {
 			expressCargo = append(expressCargo, ele)
