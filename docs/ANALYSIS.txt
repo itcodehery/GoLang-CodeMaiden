@@ -1,0 +1,233 @@
+Technical Evaluation Report: IRCTC (Indian Railway Catering and Tourism Corporation)
+
+Portal: https://www.irctc.co.in
+Domain: Online Railway Ticket Booking & Tourism Services
+Author: CIA-3 Project Submission
+Date: March 2026
+
+Table of Contents
+
+1. Introduction
+2. Observable Behavior Analysis
+3. System Architecture Analysis
+4. Performance Characteristics
+5. Scalability Limitations
+6. Reliability Risks
+7. Proposed Architectural Improvements
+8. Technical Justification: Why Go for Public Service Systems
+9. Conclusion
+10. References
+
+1. Introduction
+
+IRCTC is India's sole authorized online platform for booking Indian Railways tickets. It serves as one of the highest-traffic transactional websites globally, processing over 9 lakh (900,000) ticket bookings daily and serving approximately 3 crore (30 million) users across India. During peak periods such as Tatkal booking windows (10:00 AM - 12:00 PM IST), the system experiences extreme traffic surges with millions of concurrent users competing for a limited number of seats.
+
+This report conducts a structured technical evaluation of IRCTC based on observable behavior, publicly available information, and industry analysis. The evaluation covers load time analysis, request patterns, session handling, API structure, client-server interaction, and proposes concrete architectural improvements.
+
+2. Observable Behavior Analysis
+
+2.1 Load Time and Page Performance
+
+Metric | Observed Value | Industry Benchmark
+Initial Page Load (Desktop) | 3-6 seconds | < 2 seconds
+Time to Interactive (TTI) | 5-8 seconds | < 3.5 seconds
+First Contentful Paint (FCP) | 1.5-3 seconds | < 1.8 seconds
+Largest Contentful Paint (LCP) | 4-7 seconds | < 2.5 seconds
+Total Page Weight | ~3-5 MB | < 1.5 MB
+Number of HTTP Requests | 80-120+ | < 50
+
+Key Observations:
+- The homepage is heavily loaded with promotional banners, tourism advertisements, and multiple third-party tracking scripts that inflate page weight.
+- Static assets (CSS, JS, images) are served via CDN, with 87% of static content delivered through CDN infrastructure.
+- JavaScript bundles are large and not optimally code-split, leading to high TTI.
+- Multiple render-blocking resources delay First Contentful Paint.
+
+2.2 Request Patterns
+
+Login Flow:
+1. POST /authprovider/v1/login - Credential submission with CAPTCHA validation
+2. Server responds with session token (cookie-based) + CSRF token
+3. Subsequent requests include both session cookie and CSRF header
+
+Train Search Flow:
+1. POST /eticketing/protected/mapps1/altabordstnmap - Station autocomplete
+2. POST /eticketing/protected/mapps1/avlfaremapps1 - Availability and fare query
+3. Response includes seat matrix, class-wise availability, and dynamic pricing
+
+Booking Flow:
+1. POST /eticketing/protected/mapps1/bookingBoardingGetDetails - Initiate booking
+2. POST /eticketing/protected/mapps1/bookingconfirm - Confirm and pay
+3. Redirect to payment gateway -> callback to confirm transaction
+
+Observed API Characteristics:
+- APIs follow a REST-like pattern but with non-standard URL naming conventions
+- JSON payloads are used throughout
+- Heavy reliance on server-side session state
+- Anti-bot CAPTCHA is enforced at login and booking confirmation
+- API responses include rate-limiting headers during peak hours
+
+2.3 Session Handling
+
+Aspect | Implementation
+Session Type | Server-side sessions with cookie tokens
+Session Duration | ~15-20 minutes idle timeout
+CSRF Protection | Double-submit cookie pattern
+Concurrency Control | Single active session per user enforced
+Booking Lock | Timed lock (~10 minutes) on selected seats during payment
+
+Issues Identified:
+- Server-side sessions create high memory pressure during peak loads
+- Session stickiness requirements limit horizontal scaling
+- Abrupt session expiry during payment flow causes failed transactions
+- No WebSocket or Server-Sent Events for real-time seat status updates
+
+2.4 Client-Server Interaction Model
+
+Client (Browser) -> HTTPS -> CDN (Static) -> Load Balancer (NGINX/F5) -> API Gateway (Rate Limiting) -> Auth/Search/Booking Services -> Cache Layer (Redis/Varnish) -> Database (Oracle / PostgreSQL)
+
+3. System Architecture Analysis
+
+3.1 Technology Stack (Inferred)
+
+Layer | Technology
+Frontend | Angular / React, HTML5, CSS3, JavaScript
+Backend | Java (Spring Boot), Python (auxiliary services)
+Web Server | NGINX (reverse proxy / load balancer)
+Database | Oracle (primary transactional), PostgreSQL (auxiliary)
+Cache | Redis (distributed cache), Varnish (HTTP cache)
+CDN | Enterprise CDN for static asset delivery
+Session Store | Server-side (likely Redis-backed)
+Payment Gateway | Multiple integrations (SBI, HDFC, Paytm, UPI)
+Anti-Bot | AI-powered bot detection with CAPTCHA
+
+3.2 Microservices Architecture
+
+IRCTC has transitioned from a monolithic J2EE application to a microservices architecture. Key service boundaries include:
+
+1. Authentication Service - Login, OTP, CAPTCHA verification
+2. User Profile Service - Passenger management, master lists
+3. Train Search Service - Schedule lookup, seat availability (read-heavy)
+4. Booking Service - Seat allocation, reservation creation (write-heavy, critical path)
+5. Payment Service - Gateway integration, transaction management
+6. Notification Service - SMS, email, push notifications
+7. Waitlist/RAC Service - Queue management and chart preparation
+
+3.3 Database Architecture
+
+Domain | Data Type | Access Pattern
+Inquiry DB | Train schedules, routes, stations | Read-heavy, cacheable
+User Profile DB | Account details, saved passengers | Read/Write, moderate
+Transactional DB | Bookings, payments, cancellations, refunds | Write-heavy, ACID-critical
+
+Data Replication: Primary-replica setup with automatic failover for disaster recovery. The transactional database requires strong consistency guarantees, ruling out eventual consistency models for the booking critical path.
+
+3.4 Caching Strategy
+
+Request Flow with Caching:
+Client Request -> Static Content? -> YES -> CDN (87% hit rate)
+                -> Train Schedule? -> YES -> Varnish HTTP Cache (TTL: 15min)
+                -> Seat Availability? -> YES -> Redis Cache (TTL: 30s-60s)
+                -> Booking/Payment? -> YES -> Direct to Database
+
+4. Performance Characteristics
+
+4.1 Key Metrics (FY 2024-25)
+
+Metric | Value
+System Uptime | 99.86% (FY24-25), improving to 99.98% (Apr-Oct 2025)
+Daily Bookings | 9,00,000+ tickets
+Peak Booking Rate | 31,814 tickets/minute (record: May 22, 2025)
+Best Single-Day Volume | 16.17 lakh tickets (March 6, 2025)
+Target Capacity (post-upgrade) | 2,25,000 transactions/minute
+User Login Growth | ~20% YoY increase (FY24-25 vs FY23-24)
+Bot Traffic Mitigated | 50%+ via CDN + anti-bot
+
+4.2 Tatkal Booking Analysis (Peak Load Pattern)
+
+The Tatkal window creates extreme traffic spikes at 10:00 AM (AC) and 11:00 AM (Non-AC).
+Characteristics: Thundering herd refresh, write-heavy requests, time-critical processing, zero tolerance for double-booking.
+
+4.3 Bottleneck Analysis
+
+Bottleneck | Impact | Severity
+Database write contention | Seat allocation serialization | Critical
+Server-side sessions | Memory pressure, session stickiness | High
+Payment gateway latency | 3-10 second round-trip for payment confirmation | High
+CAPTCHA rendering | Adds 2-5 seconds to booking flow | Medium
+Large JS bundles | Slow TTI on low-end devices/networks | Medium
+
+5. Scalability Limitations
+
+5.1 Vertical Scaling Ceiling
+Hardware upgrades have increased capacity, but Oracle licensing creates a cost-proportional ceiling, making vertical scaling economically unsustainable beyond a certain point.
+
+5.2 Horizontal Scaling Constraints
+- Session stickiness required by server-side sessions
+- Database connection limits
+- Write serialization for seat consistency
+- Vendor lock-in with Oracle
+
+5.3 Geographic Distribution Limitations
+Centralized data centers lead to increased latency for rural users. Lack of multi-region active-active deployment for the transactional layer.
+
+6. Reliability Risks
+
+6.1 Single Points of Failure
+- Central Booking Database
+- Payment Gateway Dependencies
+- Session Store (Redis cluster)
+
+6.2 Failure Modes
+Database deadlocks, payment gateway timeouts, CDN outages, DDoS/bot surges, and session store failures can severely impact availability and consistency.
+
+6.3 Observed User-Facing Issues
+Failed transactions with money deducted, delayed refunds, cryptic error messages, and booking confirmation delays.
+
+7. Proposed Architectural Improvements
+
+7.1 Event-Driven Booking Pipeline
+Replace synchronous blocking requests with an asynchronous pipeline using message queues (Kafka/RabbitMQ) to decouple reservation from payment and absorb traffic spikes.
+
+7.2 CQRS (Command Query Responsibility Segregation)
+Separate the read path (train search) from the write path (booking) to scale browsing independently of transactions.
+
+7.3 Circuit Breaker Pattern for Payment Gateways
+Implement logic to automatically route traffic away from failing payment gateways, preventing cascading failures.
+
+7.4 Distributed Rate Limiting with Fair Queuing
+Use virtual queues with wait times ("You are #4521 in line") to provide a more equitable experience for users on slower networks.
+
+7.5 Stateless Authentication with JWT
+Move session data to client-side tokens to remove server-side memory pressure and simplify horizontal scaling.
+
+7.6 Progressive Web App (PWA) Optimization
+Implement code splitting, service workers, and image optimization to improve TTI and overall frontend performance.
+
+8. Technical Justification: Why Go for Public Service Systems
+
+8.1 Comparison Matrix
+Go offers lightweight concurrency (goroutines), fast startup, true parallelism (no GIL), and excellent resource efficiency compared to Java, Node.js, Python, or PHP.
+
+8.2 Why Go Excels for IRCTC-like Systems
+- Goroutine-based Concurrency: Millions of connections with tiny memory overhead.
+- Compiled Performance: Predictable sub-millisecond response times with no VM warmup.
+- Single Binary Deployment: Simplifies deployment and reduces dependency issues.
+- Built-in Networking: Production-grade HTTP stack used by Cloudflare and Google.
+- Resource Efficiency: Lower server costs and faster scaling.
+
+8.3 Real-World Go Adoption
+Used by Cloudflare, Uber, Twitch, Google, and Zerodha (Indian stock trading platform) for high-traffic infrastructure.
+
+9. Conclusion
+
+IRCTC has modernized significantly, but move to event-driven architectures, CQRS, circuit breakers, and performance-oriented languages like Go for critical microservices would further improve scalability and user experience.
+
+10. References
+
+1. Press Information Bureau, Government of India
+2. Indian Railways Official Statistics
+3. GeeksforGeeks System Design Analysis
+4. Millennium Post CDN Reports
+5. Pratt Institute Usability Critique
+6. GoodReturns Booking Capacity Upgrade
+7. Economic Times Infrastructure Reports
